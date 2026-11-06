@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Тетрис</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root {
+    --bg: var(--tg-theme-bg-color, #ffffff);
+    --text: var(--tg-theme-text-color, #1c1c1e);
+    --hint: var(--tg-theme-hint-color, #8e8e93);
+    --btn: var(--tg-theme-button-color, #2f80ed);
+    --btn-text: var(--tg-theme-button-text-color, #ffffff);
+    --panel: var(--tg-theme-secondary-bg-color, #f0f0f5);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; user-select: none; -webkit-user-select: none; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font-family: -apple-system, "SF Pro Text", Roboto, "Segoe UI", sans-serif; overflow: hidden; touch-action: none; overscroll-behavior: none; }
+  #app { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: space-between;
+    padding: max(10px, env(safe-area-inset-top)) 12px max(12px, env(safe-area-inset-bottom)); gap: 10px; }
+  .top { width: 100%; max-width: 420px; display: flex; gap: 8px; }
+  .stat { flex: 1; background: var(--panel); border-radius: 12px; padding: 6px 10px; }
+  .stat small { display: block; color: var(--hint); font-size: 11px; }
+  .stat b { font-size: 18px; font-variant-numeric: tabular-nums; }
+  .stage { flex: 1; min-height: 0; width: 100%; display: flex; justify-content: center; align-items: center; gap: 10px; position: relative; }
+  canvas { background: var(--panel); border-radius: 10px; max-height: 100%; }
+  #board { height: 100%; aspect-ratio: 1 / 2; max-width: 62%; }
+  .side { display: flex; flex-direction: column; gap: 8px; align-items: center; }
+  #next { width: 72px; height: 72px; }
+  .side small { color: var(--hint); font-size: 11px; }
+  .overlay { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 12px; background: color-mix(in srgb, var(--bg) 78%, transparent); border-radius: 10px; text-align: center; }
+  .overlay.hidden { display: none; }
+  .overlay h2 { margin: 0; font-size: 26px; }
+  .overlay p { margin: 0; color: var(--hint); }
+  .primary { background: var(--btn); color: var(--btn-text); border: 0; border-radius: 12px; padding: 12px 28px; font-size: 16px; font-weight: 600; }
+  .pad { width: 100%; max-width: 420px; display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; }
+  .gear { flex: 0 0 46px; border: 0; border-radius: 12px; background: var(--panel); color: var(--text); font-size: 20px; }
+  #themes { z-index: 5; }
+  #themeList { display: flex; flex-direction: column; gap: 8px; width: 86%; max-width: 280px; }
+  .theme-btn { display: flex; align-items: center; justify-content: space-between; gap: 10px; border: 2px solid transparent;
+    border-radius: 12px; padding: 9px 12px; background: var(--panel); color: var(--text); font-size: 15px; }
+  .theme-btn.active { border-color: var(--btn); }
+  .sw { display: flex; gap: 3px; }
+  .sw i { width: 14px; height: 14px; border-radius: 4px; display: block; }
+  .pad button { height: 54px; border: 0; border-radius: 14px; background: var(--panel); color: var(--text); font-size: 20px; }
+  .pad button:active { background: var(--btn); color: var(--btn-text); }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="top">
+    <div class="stat"><small>Очки</small><b id="score">0</b></div>
+    <div class="stat"><small>Линии</small><b id="lines">0</b></div>
+    <div class="stat"><small>Уровень</small><b id="level">1</b></div>
+    <div class="stat"><small>Рекорд</small><b id="best">0</b></div>
+    <button class="gear" id="gear" aria-label="Оформление">🎨</button>
+  </div>
+
+  <div class="stage" id="stage">
+    <canvas id="board" width="300" height="600"></canvas>
+    <div class="side"><small>Далее</small><canvas id="next" width="96" height="96"></canvas></div>
+    <div class="overlay hidden" id="themes">
+      <h2>Оформление</h2>
+      <div id="themeList"></div>
+      <button class="primary" id="closeThemes">Готово</button>
+    </div>
+    <div class="overlay" id="overlay">
+      <h2 id="ovTitle">Тетрис</h2>
+      <p id="ovText">Свайп: двигать и ронять<br>Тап: повернуть по часовой</p>
+      <button class="primary" id="startBtn">Играть</button>
+    </div>
+  </div>
+
+  <div class="pad">
+    <button data-a="left" aria-label="Влево">◀</button>
+    <button data-a="rotateL" aria-label="Повернуть против часовой">⟲</button>
+    <button data-a="rotate" aria-label="Повернуть по часовой">⟳</button>
+    <button data-a="right" aria-label="Вправо">▶</button>
+    <button data-a="down" aria-label="Вниз">▼</button>
+    <button data-a="drop" aria-label="Сбросить">⤓</button>
+  </div>
+</div>
+
+<script>
+const tg = window.Telegram && Telegram.WebApp;
+if (tg) {
+  tg.ready(); tg.expand();
+  try { tg.disableVerticalSwipes && tg.disableVerticalSwipes(); } catch (e) {}
+}
+const haptic = (type) => { try { tg && tg.HapticFeedback && tg.HapticFeedback.impactOccurred(type || 'light'); } catch (e) {} };
+
+const COLS = 10, ROWS = 20;
+const SHAPES = {
+  I: [[0,0,0,0],[1,1,1,1],[0,0,0,0],[0,0,0,0]],
+  O: [[1,1],[1,1]],
+  T: [[0,1,0],[1,1,1],[0,0,0]],
+  S: [[0,1,1],[1,1,0],[0,0,0]],
+  Z: [[1,1,0],[0,1,1],[0,0,0]],
+  J: [[1,0,0],[1,1,1],[0,0,0]],
+  L: [[0,0,1],[1,1,1],[0,0,0]],
+};
+const BASE = { I:'#35b9c9', O:'#e8b93a', T:'#9b6bd6', S:'#4cb86b', Z:'#e0525a', J:'#4a73d9', L:'#e8803a' };
+const THEMES = {
+  tg:   { name: 'Как в Telegram', style: 'glossy', vars: null, colors: BASE },
+  dark: { name: 'Графит', style: 'glossy',
+          vars: { bg:'#16181d', text:'#e6e8ee', hint:'#7d8494', btn:'#4c8dff', btnText:'#ffffff', panel:'#22262e' },
+          colors: { I:'#45d0e0', O:'#f2c744', T:'#b183ee', S:'#5fd481', Z:'#f06670', J:'#5f88f0', L:'#f59a52' } },
+  neon: { name: 'Неон', style: 'outline',
+          vars: { bg:'#0a0a1f', text:'#e8f0ff', hint:'#7a86b8', btn:'#ff2e97', btnText:'#ffffff', panel:'#14143a' },
+          colors: { I:'#00f0ff', O:'#fff200', T:'#c04bff', S:'#39ff88', Z:'#ff3b5c', J:'#4d7bff', L:'#ff9d1a' } },
+  gb:   { name: 'Game Boy', style: 'pixel',
+          vars: { bg:'#9bbc0f', text:'#0f380f', hint:'#306230', btn:'#0f380f', btnText:'#9bbc0f', panel:'#8bac0f' },
+          colors: { I:'#0f380f', O:'#306230', T:'#0f380f', S:'#306230', Z:'#0f380f', J:'#306230', L:'#0f380f' } },
+  candy:{ name: 'Пастель', style: 'flat',
+          vars: { bg:'#fff5f7', text:'#4a3b52', hint:'#a08fa8', btn:'#ff7eb6', btnText:'#ffffff', panel:'#ffe6ee' },
+          colors: { I:'#7fd6e0', O:'#ffd36e', T:'#c9a0f0', S:'#8fe0a8', Z:'#ff8f9c', J:'#8fa8f5', L:'#ffb27a' } },
+};
+let COLORS = BASE, blockStyle = 'glossy', themeId = 'tg';
+
+/* SRS: таблицы «подпрыгиваний» при повороте (x вправо, y вверх), ключ — «из»+«в» */
+const KICK_JLSTZ = {
+  '01': [[0,0],[-1,0],[-1,1],[0,-2],[-1,-2]], '10': [[0,0],[1,0],[1,-1],[0,2],[1,2]],
+  '12': [[0,0],[1,0],[1,-1],[0,2],[1,2]],     '21': [[0,0],[-1,0],[-1,1],[0,-2],[-1,-2]],
+  '23': [[0,0],[1,0],[1,1],[0,-2],[1,-2]],    '32': [[0,0],[-1,0],[-1,-1],[0,2],[-1,2]],
+  '30': [[0,0],[-1,0],[-1,-1],[0,2],[-1,2]],  '03': [[0,0],[1,0],[1,1],[0,-2],[1,-2]],
+};
+const KICK_I = {
+  '01': [[0,0],[-2,0],[1,0],[-2,-1],[1,2]],   '10': [[0,0],[2,0],[-1,0],[2,1],[-1,-2]],
+  '12': [[0,0],[-1,0],[2,0],[-1,2],[2,-1]],   '21': [[0,0],[1,0],[-2,0],[1,-2],[-2,1]],
+  '23': [[0,0],[2,0],[-1,0],[2,1],[-1,-2]],   '32': [[0,0],[-2,0],[1,0],[-2,-1],[1,2]],
+  '30': [[0,0],[1,0],[-2,0],[1,-2],[-2,1]],   '03': [[0,0],[-1,0],[2,0],[-1,2],[2,-1]],
+};
+
+const $ = (id) => document.getElementById(id);
+const cv = $('board'), ctx = cv.getContext('2d');
+const nv = $('next'), nctx = nv.getContext('2d');
+const CELL = cv.width / COLS;
+
+let grid, piece, nextType, bag = [], score, lines, level, best = 0;
+let running = false, over = false, dropTimer = 0, last = 0, raf;
+
+function newBag() {
+  bag = Object.keys(SHAPES);
+  for (let i = bag.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [bag[i], bag[j]] = [bag[j], bag[i]]; }
+}
+function takeType() { if (!bag.length) newBag(); return bag.pop(); }
+function spawn() {
+  const type = nextType || takeType();
+  nextType = takeType();
+  const m = SHAPES[type].map(r => r.slice());
+  piece = { type, m, r: 0, x: Math.floor((COLS - m[0].length) / 2), y: 0 };
+  if (collides(piece.m, piece.x, piece.y)) gameOver();
+  drawNext();
+}
+function collides(m, px, py) {
+  for (let y = 0; y < m.length; y++) for (let x = 0; x < m[y].length; x++) {
+    if (!m[y][x]) continue;
+    const gx = px + x, gy = py + y;
+    if (gx < 0 || gx >= COLS || gy >= ROWS) return true;
+    if (gy >= 0 && grid[gy][gx]) return true;
+  }
+  return false;
+}
+function rotate(m) { return m[0].map((_, i) => m.map(r => r[i]).reverse()); }
+function rotateCCW(m) { return m[0].map((_, i) => m.map(r => r[m[0].length - 1 - i])); }
+
+function move(dx) {
+  if (!running) return;
+  if (!collides(piece.m, piece.x + dx, piece.y)) { piece.x += dx; haptic('light'); draw(); }
+}
+function rotatePiece(dir = 1) {                       // 1 — по часовой, -1 — против
+  if (!running || piece.type === 'O') return;
+  const from = piece.r, to = (from + dir + 4) % 4;
+  const m = dir === 1 ? rotate(piece.m) : rotateCCW(piece.m);
+  const kicks = (piece.type === 'I' ? KICK_I : KICK_JLSTZ)['' + from + to];
+  for (const [kx, ky] of kicks) {
+    if (!collides(m, piece.x + kx, piece.y - ky)) {
+      piece.m = m; piece.x += kx; piece.y -= ky; piece.r = to;
+      haptic('light'); draw(); return;
+    }
+  }
+}
+function softDrop() {
+  if (!running) return;
+  if (!collides(piece.m, piece.x, piece.y + 1)) { piece.y++; score += 1; updateHud(); }
+  else lock();
+  dropTimer = 0; draw();
+}
+function hardDrop() {
+  if (!running) return;
+  let n = 0;
+  while (!collides(piece.m, piece.x, piece.y + 1)) { piece.y++; n++; }
+  score += n * 2; haptic('medium'); lock(); dropTimer = 0; draw();
+}
+function lock() {
+  piece.m.forEach((row, y) => row.forEach((v, x) => {
+    if (v && piece.y + y >= 0) grid[piece.y + y][piece.x + x] = piece.type;
+  }));
+  let cleared = 0;
+  for (let y = ROWS - 1; y >= 0; y--) {
+    if (grid[y].every(Boolean)) { grid.splice(y, 1); grid.unshift(Array(COLS).fill(0)); cleared++; y++; }
+  }
+  if (cleared) {
+    score += [0, 100, 300, 500, 800][cleared] * level;
+    lines += cleared;
+    level = Math.floor(lines / 10) + 1;
+    haptic(cleared >= 4 ? 'heavy' : 'medium');
+  }
+  updateHud();
+  spawn();
+}
+function speed() { return Math.max(90, 800 - (level - 1) * 70); }
+
+function updateHud() {
+  $('score').textContent = score; $('lines').textContent = lines; $('level').textContent = level;
+  if (score > best) { best = score; }
+  $('best').textContent = best;
+}
+
+function block(c, x, y, size, color) {
+  const px = x * size, py = y * size;
+  if (blockStyle === 'outline') {
+    c.save(); c.shadowColor = color; c.shadowBlur = size * 0.45; c.lineWidth = 2; c.strokeStyle = color; c.fillStyle = color + '33';
+    c.beginPath(); c.roundRect(px + 2, py + 2, size - 4, size - 4, size * 0.15); c.fill(); c.stroke(); c.restore();
+  } else if (blockStyle === 'pixel') {
+    c.fillStyle = color; c.fillRect(px + 1, py + 1, size - 2, size - 2);
+    c.clearRect(px + 4, py + 4, size - 8, size - 8);
+    c.fillStyle = color; c.fillRect(px + 7, py + 7, size - 14, size - 14);
+  } else if (blockStyle === 'flat') {
+    c.fillStyle = color; c.beginPath(); c.roundRect(px + 1, py + 1, size - 2, size - 2, size * 0.3); c.fill();
+  } else {
+    c.fillStyle = color; c.beginPath(); c.roundRect(px + 1, py + 1, size - 2, size - 2, size * 0.18); c.fill();
+    c.fillStyle = 'rgba(255,255,255,0.22)'; c.beginPath(); c.roundRect(px + 3, py + 3, size - 6, (size - 6) * 0.35, size * 0.1); c.fill();
+  }
+}
+function draw() {
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  ctx.strokeStyle = 'rgba(128,128,128,0.12)'; ctx.lineWidth = 1;
+  for (let x = 1; x < COLS; x++) { ctx.beginPath(); ctx.moveTo(x * CELL, 0); ctx.lineTo(x * CELL, cv.height); ctx.stroke(); }
+  for (let y = 1; y < ROWS; y++) { ctx.beginPath(); ctx.moveTo(0, y * CELL); ctx.lineTo(cv.width, y * CELL); ctx.stroke(); }
+  for (let y = 0; y < ROWS; y++) for (let x = 0; x < COLS; x++) if (grid[y][x]) block(ctx, x, y, CELL, COLORS[grid[y][x]]);
+  if (!piece) return;
+  let gy = piece.y;                                // «призрак» — куда упадёт фигура
+  while (!collides(piece.m, piece.x, gy + 1)) gy++;
+  ctx.globalAlpha = 0.25;
+  piece.m.forEach((r, y) => r.forEach((v, x) => v && block(ctx, piece.x + x, gy + y, CELL, COLORS[piece.type])));
+  ctx.globalAlpha = 1;
+  piece.m.forEach((r, y) => r.forEach((v, x) => v && block(ctx, piece.x + x, piece.y + y, CELL, COLORS[piece.type])));
+}
+function drawNext() {
+  nctx.clearRect(0, 0, nv.width, nv.height);
+  const m = SHAPES[nextType], s = 22;
+  const ox = (nv.width - m[0].length * s) / 2 / s, oy = (nv.height - m.length * s) / 2 / s;
+  m.forEach((r, y) => r.forEach((v, x) => v && block(nctx, ox + x, oy + y, s, COLORS[nextType])));
+}
+
+function loop(t) {
+  if (!running) return;
+  dropTimer += t - last; last = t;
+  if (dropTimer > speed()) {
+    dropTimer = 0;
+    if (!collides(piece.m, piece.x, piece.y + 1)) piece.y++; else lock();
+    draw();
+  }
+  raf = requestAnimationFrame(loop);
+}
+
+function start() {
+  grid = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+  score = 0; lines = 0; level = 1; over = false; bag = []; nextType = null;
+  updateHud(); spawn();
+  $('overlay').classList.add('hidden');
+  running = true; dropTimer = 0; last = performance.now();
+  cancelAnimationFrame(raf); raf = requestAnimationFrame(loop); draw();
+}
+function gameOver() {
+  running = false; over = true; piece = null;
+  try { tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred('error'); } catch (e) {}
+  saveBest();
+  $('ovTitle').textContent = 'Игра окончена';
+  $('ovText').innerHTML = 'Очки: <b>' + score + '</b><br>Рекорд: <b>' + best + '</b>';
+  $('startBtn').textContent = 'Ещё раз';
+  $('overlay').classList.remove('hidden');
+}
+
+/* Хранилище: CloudStorage Telegram, а в обычном браузере — localStorage */
+const store = {
+  get(key, cb) {
+    try { if (tg && tg.CloudStorage) { tg.CloudStorage.getItem(key, (err, v) => cb(err ? null : v)); return; } } catch (e) {}
+    try { cb(localStorage.getItem(key)); } catch (e) { cb(null); }
+  },
+  set(key, val) {
+    try { if (tg && tg.CloudStorage) { tg.CloudStorage.setItem(key, String(val)); return; } } catch (e) {}
+    try { localStorage.setItem(key, String(val)); } catch (e) {}
+  },
+};
+function loadBest() { store.get('best', v => { best = +v || 0; $('best').textContent = best; }); }
+function saveBest() { store.set('best', best); }
+
+/* Оформление */
+const VAR_MAP = { bg: '--bg', text: '--text', hint: '--hint', btn: '--btn', btnText: '--btn-text', panel: '--panel' };
+function applyTheme(id, save) {
+  const t = THEMES[id] || THEMES.tg;
+  themeId = THEMES[id] ? id : 'tg'; COLORS = t.colors; blockStyle = t.style;
+  const root = document.documentElement.style;
+  for (const k in VAR_MAP) { if (t.vars) root.setProperty(VAR_MAP[k], t.vars[k]); else root.removeProperty(VAR_MAP[k]); }
+  try { if (tg) { tg.setHeaderColor(t.vars ? t.vars.bg : 'bg_color'); tg.setBackgroundColor(t.vars ? t.vars.bg : 'bg_color'); } } catch (e) {}
+  if (save) store.set('theme', themeId);
+  renderThemeList(); draw(); if (nextType) drawNext();
+}
+function renderThemeList() {
+  const box = $('themeList'); box.innerHTML = '';
+  for (const id in THEMES) {
+    const t = THEMES[id], b = document.createElement('button');
+    b.className = 'theme-btn' + (id === themeId ? ' active' : '');
+    const sw = ['I', 'T', 'S', 'Z'].map(k => '<i style="background:' + t.colors[k] + '"></i>').join('');
+    b.innerHTML = '<span>' + t.name + '</span><span class="sw">' + sw + '</span>';
+    b.onclick = () => { applyTheme(id, true); haptic('light'); };
+    box.appendChild(b);
+  }
+}
+let wasRunning = false;
+$('gear').addEventListener('click', () => { wasRunning = running; running = false; $('themes').classList.remove('hidden'); });
+$('closeThemes').addEventListener('click', () => {
+  $('themes').classList.add('hidden');
+  if (wasRunning) { running = true; last = performance.now(); raf = requestAnimationFrame(loop); }
+});
+
+/* Управление */
+const actions = { left: () => move(-1), right: () => move(1), rotate: () => rotatePiece(1), rotateL: () => rotatePiece(-1), down: softDrop, drop: hardDrop };
+document.querySelectorAll('.pad button').forEach(b => {
+  let rep;
+  const act = actions[b.dataset.a];
+  b.addEventListener('pointerdown', e => {
+    e.preventDefault(); act();
+    if (['left', 'right', 'down'].includes(b.dataset.a)) rep = setInterval(act, 110);
+  });
+  ['pointerup', 'pointerleave', 'pointercancel'].forEach(ev => b.addEventListener(ev, () => clearInterval(rep)));
+});
+window.addEventListener('keydown', e => {
+  const k = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'rotate', x: 'rotate', z: 'rotateL', ArrowDown: 'down', ' ': 'drop' }[e.key];
+  if (k) { e.preventDefault(); actions[k](); }
+});
+
+/* Жесты на поле: свайп по горизонтали — двигать, вниз — ронять, тап — повернуть */
+let sx, sy, acc, moved, st;
+cv.addEventListener('pointerdown', e => { sx = e.clientX; sy = e.clientY; acc = 0; moved = false; st = performance.now(); cv.setPointerCapture(e.pointerId); });
+cv.addEventListener('pointermove', e => {
+  if (sx == null) return;
+  const step = cv.getBoundingClientRect().width / COLS;
+  const dx = e.clientX - sx;
+  while (dx - acc * step > step) { move(1); acc++; moved = true; }
+  while (dx - acc * step < -step) { move(-1); acc--; moved = true; }
+  if (e.clientY - sy > step * 3) { softDrop(); sy = e.clientY - step * 2; moved = true; }
+});
+cv.addEventListener('pointerup', e => {
+  if (sx == null) return;
+  const dy = e.clientY - sy, fast = performance.now() - st < 220;
+  if (!moved && Math.abs(e.clientX - sx) < 10 && Math.abs(dy) < 10) rotatePiece(1);
+  else if (fast && dy > 80 && Math.abs(e.clientX - sx) < 40) hardDrop();
+  sx = null;
+});
+
+let paused = false;
+$('startBtn').addEventListener('click', () => { if (paused) resume(); else start(); });
+document.addEventListener('visibilitychange', () => { if (document.hidden && running) { running = false; $('ovTitle').textContent = 'Пауза'; $('ovText').textContent = ''; $('startBtn').textContent = 'Продолжить'; paused = true; $('overlay').classList.remove('hidden'); } });
+function resume() { paused = false; $('overlay').classList.add('hidden'); running = true; last = performance.now(); raf = requestAnimationFrame(loop); }
+
+grid = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+loadBest(); applyTheme('tg', false); store.get('theme', v => { if (v) applyTheme(v, false); });
+</script>
+</body>
+</html>
